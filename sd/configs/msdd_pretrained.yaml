@@ -1,0 +1,82 @@
+# ============================================================
+# NeMo Diarization Inference Config
+# configs/msdd_pretrained.yaml
+#
+# Approach 3 — Fine-tuned TitaNet + Pretrained MSDD
+#
+# Speaker embeddings : fine-tuned TitaNet (Mongolian)
+# MSDD model         : pretrained  (diar_msdd_telephonic)
+# VAD                : pretrained  (vad_multilingual_marblenet)
+#
+# Used by:
+#   python diarize.py \
+#     --audio_dir data/diarization_dataset/test/audio \
+#     --rttm_dir  data/diarization_dataset/test/rttm \
+#     --output_dir outputs/rttm_finetuned_titanet_pretrained_msdd \
+#     --config configs/msdd_pretrained.yaml \
+#     --method msdd
+# ============================================================
+
+name: "MSDD-Pretrained-FinetunedTitaNet"
+sample_rate: 16000
+
+# ──────────────────────────────────────────────────────────────
+# Fine-tuned TitaNet speaker embedding model
+# Fallback: comment out and use pretrained titanet_large below
+# ──────────────────────────────────────────────────────────────
+speaker_model_path: "../sr/outputs/final/titanet_mongolian_finetuned.nemo"
+# speaker_model_path: "../sr/checkpoints/titanet_large_pretrained.nemo"
+
+# ──────────────────────────────────────────────────────────────
+# Diarization Inference Config
+# ──────────────────────────────────────────────────────────────
+diarizer:
+  manifest_filepath: null          # set at inference time by diarize.py
+  out_dir: "outputs/rttm_finetuned_titanet_pretrained_msdd"
+  oracle_vad: false
+  collar: 0.25
+  ignore_overlap: true
+
+  speaker_embeddings:
+    model_path: ${speaker_model_path}
+    parameters:
+      window_length_in_sec: [3.0, 2.5, 2.0, 1.5, 1.0]
+      shift_length_in_sec:  [1.5, 1.25, 1.0, 0.75, 0.5]
+      multiscale_weights:   [1, 1, 1, 1, 1]
+      save_embeddings: true
+
+  vad:
+    model_path: "vad_multilingual_marblenet"
+    parameters:
+      onset:            0.4        # kept consistent with baseline configs
+      offset:           0.6
+      pad_onset:        0.1
+      pad_offset:       0.1
+      min_duration_on:  0.2
+      min_duration_off: 0.2
+      filter_speech_first: true
+      window_length_in_sec: 0.15
+      shift_length_in_sec:  0.01
+
+  msdd_model:
+    model_path: "diar_msdd_telephonic"   # ← pretrained MSDD, NOT fine-tuned
+    parameters:
+      use_speaker_model_from_ckpt: false
+      infer_batch_size: 25
+      sigmoid_threshold: [0.7]
+      seq_eval_mode: false
+      split_infer: true
+      diar_eval_settings:
+        - [0.25, true]             # [collar, ignore_overlap]
+        - [0.25, false]
+      diar_window_length: 50
+      diar_batch_size: 25
+      diar_overlap_length: 1
+
+  clustering:
+    parameters:
+      oracle_num_speakers: false
+      max_num_speakers: 8
+      enhanced_count_thres: 80
+      max_rp_threshold: 0.25
+      sparse_search_volume: 30

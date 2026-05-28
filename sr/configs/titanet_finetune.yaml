@@ -1,0 +1,215 @@
+# ============================================================
+# TitaNet-Large Fine-Tuning Config for Mongolian Speaker Diarization
+# configs/titanet_finetune.yaml
+# ============================================================
+
+name: "TitaNet-Large-Mongolian"
+sample_rate: 16000
+
+# ──────────────────────────────────────────────────────────────
+# Pretrained model checkpoint
+# ──────────────────────────────────────────────────────────────
+init_from_nemo_model: "checkpoints/titanet_large_pretrained.nemo"
+
+# ──────────────────────────────────────────────────────────────
+# Model — single block (YAML does not allow duplicate keys)
+# ──────────────────────────────────────────────────────────────
+model:
+  num_classes: 39        # UPDATE after running prepare_dataset.py
+
+  encoder:
+    _target_: nemo.collections.asr.modules.ConvASREncoder
+    feat_in: 80
+    activation: relu
+    conv_mask: true
+    jasper:
+      - filters: 1024
+        repeat: 1
+        kernel: [3]
+        stride: [1]
+        dilation: [1]
+        dropout: 0.0
+        residual: false
+        separable: true
+        se: true
+        se_context_size: -1
+      - filters: 1024
+        repeat: 3
+        kernel: [7]
+        stride: [1]
+        dilation: [1]
+        dropout: 0.0
+        residual: true
+        separable: true
+        se: true
+        se_context_size: -1
+      - filters: 1024
+        repeat: 3
+        kernel: [11]
+        stride: [1]
+        dilation: [1]
+        dropout: 0.0
+        residual: true
+        separable: true
+        se: true
+        se_context_size: -1
+      - filters: 1024
+        repeat: 3
+        kernel: [15]
+        stride: [1]
+        dilation: [1]
+        dropout: 0.0
+        residual: true
+        separable: true
+        se: true
+        se_context_size: -1
+      - filters: 1536
+        repeat: 1
+        kernel: [1]
+        stride: [1]
+        dilation: [1]
+        dropout: 0.0
+        residual: false
+        separable: false
+        se: false
+        se_context_size: -1
+
+  decoder:
+    _target_: nemo.collections.asr.modules.SpeakerDecoder
+    feat_in: 1536
+    num_classes: ${model.num_classes}
+    pool_mode: "attention"
+    emb_sizes: [192]
+    angular: true
+
+  loss:
+    scale: 30.0
+    margin: 0.2
+
+  preprocessor:
+    _target_: nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor
+    sample_rate: ${sample_rate}
+    normalize: "per_feature"
+    window_size: 0.025
+    window_stride: 0.01
+    window: "hann"
+    features: 80
+    n_fft: 512
+    frame_splicing: 1
+    dither: 0.00001
+    pad_to: 0
+    stft_conv: false
+
+  spec_augment:
+    _target_: nemo.collections.asr.modules.SpectrogramAugmentation
+    freq_masks: 2
+    time_masks: 5
+    freq_width: 27
+    time_width: 0.05
+    rect_masks: 0
+    rect_time: 5
+    rect_freq: 20
+
+  train_ds:
+    manifest_filepath: "data/manifests/train_manifest.json"
+    sample_rate: ${sample_rate}
+    labels: null
+    batch_size: 64
+    shuffle: true
+    time_length: 3.0
+    is_tarred: false
+    tarred_audio_filepaths: null
+    augmentor:
+      speed:
+        prob: 0.5
+        sr: ${sample_rate}
+        resample_type: "kaiser_fast"
+        min_speed_rate: 0.9
+        max_speed_rate: 1.1
+      white_noise:
+        prob: 0.3
+        min_level: -90
+        max_level: -46
+
+  validation_ds:
+    manifest_filepath: "data/manifests/val_manifest.json"
+    sample_rate: ${sample_rate}
+    labels: null
+    batch_size: 64
+    shuffle: false
+    time_length: 3.0
+
+  test_ds:
+    manifest_filepath: "data/manifests/test_manifest.json"
+    sample_rate: ${sample_rate}
+    labels: null
+    batch_size: 64
+    shuffle: false
+    time_length: 3.0
+
+  optim:
+    name: adamw
+    lr: 0.0001
+    weight_decay: 0.001
+    betas: [0.9, 0.98]
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 1000
+      warmup_ratio: null
+      min_lr: 0.0000001
+      last_epoch: -1
+
+# ──────────────────────────────────────────────────────────────
+# Trainer
+# ──────────────────────────────────────────────────────────────
+trainer:
+  devices: 1
+  accelerator: gpu
+  strategy: auto
+  max_epochs: 50
+  accumulate_grad_batches: 2
+  gradient_clip_val: 1.0
+  precision: 16-mixed
+  log_every_n_steps: 50
+  val_check_interval: 1.0
+  enable_checkpointing: true
+  enable_progress_bar: true
+  num_sanity_val_steps: 2
+
+# ──────────────────────────────────────────────────────────────
+# Experiment Manager
+# ──────────────────────────────────────────────────────────────
+exp_manager:
+  exp_dir: "outputs/"
+  name: ${name}
+  create_tensorboard_logger: true
+  create_wandb_logger: false
+  resume_if_exists: true
+  resume_ignore_no_checkpoint: true
+  create_checkpoint_callback: true
+  checkpoint_callback_params:
+    monitor: "val_loss"
+    mode: "min"
+    save_top_k: 3
+    save_last: true
+    always_save_nemo: true
+    filename: "titanet-mongolian-{epoch:03d}-{val_loss:.4f}"
+
+# ──────────────────────────────────────────────────────────────
+# Layer Freezing Strategy (used by train.py PhasedFreezeCallback)
+# ──────────────────────────────────────────────────────────────
+freeze_strategy:
+  phase1:
+    freeze_encoder: true
+    freeze_decoder: false
+    epochs: 10
+    lr: 0.0005
+  phase2:
+    freeze_encoder: false
+    unfreeze_from_layer: "encoder.encoder.16"
+    epochs: 20
+    lr: 0.0001
+  phase3:
+    freeze_encoder: false
+    epochs: 50
+    lr: 0.00003

@@ -1,0 +1,42 @@
+# Python/runtime artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local automation/assistant files
+.agents/
+skills-lock.json
+
+# Archives and generated document builds
+*.zip
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
+# Training data, model weights, and generated results
+outputs/
+prototype/web_uploads/
+sd/checkpoints/
+sd/data/
+sd/logs/
+sd/outputs/
+sr/checkpoints/
+sr/data/
+sr/logs/
+sr/outputs/
+
+# Large model/audio artifacts wherever they appear
+*.ckpt
+*.nemo
+*.wav
+*.mp3
+*.flac
+*.ogg

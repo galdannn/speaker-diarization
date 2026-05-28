@@ -1,0 +1,200 @@
+# ============================================================
+# NeMo MSDD Fine-Tuning Config for Mongolian Speaker Diarization
+# configs/msdd_finetune.yaml
+# ============================================================
+
+name: "MSDD-Mongolian"
+sample_rate: 16000
+
+# ──────────────────────────────────────────────────────────────
+# Pretrained speaker embedding model
+# Use fine-tuned TitaNet from Approach 1 if available,
+# otherwise falls back to pretrained titanet_large
+# ──────────────────────────────────────────────────────────────
+speaker_model_path: "../sr/outputs/final/titanet_mongolian_finetuned.nemo"
+# speaker_model_path: "../sr/checkpoints/titanet_large_pretrained.nemo"
+
+# ──────────────────────────────────────────────────────────────
+# MSDD Model
+# ──────────────────────────────────────────────────────────────
+model:
+  num_spks_per_model: 2            # number of speakers per MSDD window
+  scale_n: 5                       # number of temporal scales
+  dropout_rate: 0.5
+
+  # Multi-scale segment durations (seconds)
+  multiscale_weights: [1, 1, 1, 1, 1]
+  multiscale_args_dict:
+    multiscale_weights: [1, 1, 1, 1, 1]
+    scale_dict:
+      0: [3.0, 1.5]                # [window_length, shift_length]
+      1: [2.0, 1.0]
+      2: [1.5, 0.75]
+      3: [1.0, 0.5]
+      4: [0.5, 0.25]
+
+  # Transformer encoder inside MSDD
+  transformer_type: "conformer"
+  d_model: 256
+  n_heads: 8
+  n_layers: 6
+  d_ff: 1024
+  dropout: 0.1
+
+  # ── Training Data ────────────────────────────────────────────
+  train_ds:
+    manifest_filepath: "data/manifests/msdd_train_manifest.json"
+    sample_rate: ${sample_rate}
+    num_spks: ${model.num_spks_per_model}
+    session_len_sec: 90            # max session length during training
+    soft_label_thres: 0.5
+    ignore_overlap: false          # include overlap regions
+    batch_size: 8                  # reduce to 4 if OOM
+    shuffle: true
+    num_workers: 4
+    pin_memory: true
+    round_digit: 2
+    encoder_infer_mode: false
+    scale_n: ${model.scale_n}
+    multiscale_args_dict: ${model.multiscale_args_dict}
+    pairwise_infer: false
+
+  # ── Validation Data ──────────────────────────────────────────
+  validation_ds:
+    manifest_filepath: "data/manifests/msdd_val_manifest.json"
+    sample_rate: ${sample_rate}
+    num_spks: ${model.num_spks_per_model}
+    session_len_sec: 90
+    soft_label_thres: 0.5
+    ignore_overlap: false
+    batch_size: 4
+    shuffle: false
+    num_workers: 4
+    pin_memory: true
+    round_digit: 2
+    encoder_infer_mode: false
+    scale_n: ${model.scale_n}
+    multiscale_args_dict: ${model.multiscale_args_dict}
+    pairwise_infer: false
+
+  # ── Test Data ────────────────────────────────────────────────
+  test_ds:
+    manifest_filepath: "data/manifests/msdd_test_manifest.json"
+    sample_rate: ${sample_rate}
+    num_spks: ${model.num_spks_per_model}
+    session_len_sec: 90
+    soft_label_thres: 0.5
+    ignore_overlap: false
+    batch_size: 1
+    shuffle: false
+    num_workers: 4
+    pin_memory: true
+    round_digit: 2
+    encoder_infer_mode: false
+    scale_n: ${model.scale_n}
+    multiscale_args_dict: ${model.multiscale_args_dict}
+    pairwise_infer: true            # pairwise inference for evaluation
+
+  # ── Optimizer ────────────────────────────────────────────────
+  optim:
+    name: adamw
+    lr: 0.0001
+    weight_decay: 0.001
+    betas: [0.9, 0.98]
+
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 500
+      warmup_ratio: null
+      min_lr: 0.000001
+      last_epoch: -1
+
+# ──────────────────────────────────────────────────────────────
+# Trainer
+# ──────────────────────────────────────────────────────────────
+trainer:
+  devices: 1
+  accelerator: gpu
+  strategy: auto
+  max_epochs: 50
+  accumulate_grad_batches: 4      # effective batch = 8 * 4 = 32
+  gradient_clip_val: 1.0
+  precision: 16-mixed
+  log_every_n_steps: 10
+  val_check_interval: 1.0
+  enable_checkpointing: true
+  enable_progress_bar: true
+  num_sanity_val_steps: 2
+
+# ──────────────────────────────────────────────────────────────
+# Experiment Manager
+# ──────────────────────────────────────────────────────────────
+exp_manager:
+  exp_dir: "outputs/"
+  name: ${name}
+  create_tensorboard_logger: true
+  create_wandb_logger: false
+  resume_if_exists: true
+  resume_ignore_no_checkpoint: true
+  create_checkpoint_callback: true
+  checkpoint_callback_params:
+    monitor: "val_loss"
+    mode: "min"
+    save_top_k: 3
+    save_last: true
+    always_save_nemo: true
+    filename: "msdd-mongolian-{epoch:03d}-{val_loss:.4f}"
+
+# ──────────────────────────────────────────────────────────────
+# Diarization Inference Config (used by diarize.py)
+# ──────────────────────────────────────────────────────────────
+diarizer:
+  manifest_filepath: null          # set at inference time
+  out_dir: "outputs/diarization"
+  oracle_vad: false          # ← add this
+  collar: 0.25               # ← add this
+  ignore_overlap: true       # ← add this
+
+  speaker_embeddings:
+    model_path: ${speaker_model_path}
+    parameters:
+      window_length_in_sec: [3.0, 2.5, 2.0, 1.5, 1.0]
+      shift_length_in_sec:  [1.5, 1.25, 1.0, 0.75, 0.5]
+      multiscale_weights:   [1, 1, 1, 1, 1]
+      save_embeddings: true
+
+  vad:
+    model_path: "vad_multilingual_marblenet"   # NeMo pretrained VAD
+    parameters:
+      onset:           0.4
+      offset:          0.6
+      pad_onset:       0.1
+      pad_offset:      0.1
+      min_duration_on: 0.2
+      min_duration_off: 0.2
+      filter_speech_first: true
+      window_length_in_sec: 0.15
+      shift_length_in_sec:  0.01
+
+  msdd_model:
+    model_path: "diar_msdd_telephonic"
+    parameters:
+      use_speaker_model_from_ckpt: false
+      infer_batch_size: 25
+      sigmoid_threshold: [0.7]
+      seq_eval_mode: false
+      split_infer: true
+      diar_eval_settings:
+        - [0.25, true]             # [collar, ignore_overlap]
+        - [0.25, false]
+      diar_window_length: 50    # ← add this, required by NeuralDiarizer
+      diar_batch_size: 25       # ← add this
+      diar_overlap_length: 1
+
+  clustering:
+    parameters:
+      oracle_num_speakers: false   # set true if num_speakers known
+      max_num_speakers: 8
+      enhanced_count_thres: 80
+      max_rp_threshold: 0.25
+      sparse_search_volume: 30

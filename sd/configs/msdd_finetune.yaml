@@ -1,0 +1,183 @@
+# ============================================================
+# NeMo MSDD Fine-Tuning Config
+# configs/msdd_finetune.yaml
+#
+# Used by:
+#   python train_msdd.py
+#   python train_msdd.py --config configs/msdd_finetune.yaml
+#   python train_msdd.py --batch_size 4 --max_epochs 30
+#
+# Architecture:
+#   - TitaNet (frozen, fine-tuned on Mongolian) → multi-scale embeddings
+#   - MSDD Transformer (fine-tuned) → per-frame speaker activity
+# ============================================================
+
+name: "MSDD-Mongolian-Finetune"
+sample_rate: 16000
+
+# ──────────────────────────────────────────────────────────────
+# Speaker embedding model
+# Points to your fine-tuned TitaNet from the SR training stage.
+# train_msdd.py reads this as cfg.speaker_model_path
+# ──────────────────────────────────────────────────────────────
+speaker_model_path: "../sr/outputs/final/titanet_mongolian_finetuned.nemo"
+
+# ──────────────────────────────────────────────────────────────
+# PyTorch Lightning Trainer
+# train_msdd.py reads: cfg.trainer.*
+# ──────────────────────────────────────────────────────────────
+trainer:
+  max_epochs: 50
+  devices: 1                      # number of GPUs (or CPUs if no GPU)
+  accelerator: "gpu"              # "gpu" | "cpu"
+  strategy: "auto"                # "auto" | "ddp" for multi-GPU
+  precision: "16-mixed"           # "16-mixed" for AMP; "32" if VRAM is tight
+  accumulate_grad_batches: 8      # effective batch = batch_size × this
+  gradient_clip_val: 1.0
+  log_every_n_steps: 10
+  val_check_interval: 1.0         # validate once per epoch
+
+# ──────────────────────────────────────────────────────────────
+# Model
+# EncDecDiarLabelModel fields expected by NeMo + train_msdd.py
+# ──────────────────────────────────────────────────────────────
+model:
+
+  # ── Number of speaker scales (must match window/shift lists) ──
+  # train_msdd.py logs this as cfg.model.scale_n
+  scale_n: 5
+
+  # ── Model architecture defaults ───────────────────────────────
+  model_defaults:
+    # These are passed through to the MSDD transformer head.
+    # Values match the telephonic pretrained checkpoint dimensions.
+    fc_d_model: 512
+    num_speakers: 2               # max simultaneous speakers per segment
+    dropout_rate: 0.1
+    tf_d_model: 192
+    tf_nhead: 4
+    tf_d_ffn: 256
+    tf_num_layers: 6
+    tf_dropout: 0.1
+
+  # ── Multi-scale embedding parameters ──────────────────────────
+  # Must match the 5-scale setup in msdd_pretrained.yaml
+  multiscale_args_dict:
+    scale_dict:
+      0: [3.0, 1.5]               # [window_sec, shift_sec] – coarsest
+      1: [2.5, 1.25]
+      2: [2.0, 1.0]
+      3: [1.5, 0.75]
+      4: [1.0, 0.5]               # finest
+    multiscale_weights: [1, 1, 1, 1, 1]
+
+  # ── Training data ─────────────────────────────────────────────
+  # train_msdd.py reads:
+  #   cfg.model.train_ds.manifest_filepath
+  #   cfg.model.train_ds.batch_size
+  train_ds:
+    manifest_filepath: "data/manifests/msdd_train_manifest.json"
+    emb_dir: "outputs/msdd_embeddings/train"
+    emb_batch_size: 4
+    sample_rate: 16000
+    num_spks: 2
+    soft_label_thres: 0.5
+    labels: null
+    batch_size: 2
+    shuffle: true
+    num_workers: 0
+    pin_memory: true
+    drop_last: true
+    session_len_sec: 20
+    random_flip: true
+
+  validation_ds:
+    manifest_filepath: "data/manifests/msdd_val_manifest.json"
+    emb_dir: "outputs/msdd_embeddings/val"
+    emb_batch_size: 4
+    sample_rate: 16000
+    num_spks: 2
+    soft_label_thres: 0.5
+    labels: null
+    batch_size: 1
+    shuffle: false
+    num_workers: 0
+    pin_memory: true
+    drop_last: false
+    session_len_sec: 20
+
+  test_ds:
+    manifest_filepath: "data/manifests/msdd_test_manifest.json"
+    emb_dir: "outputs/msdd_embeddings/test"
+    emb_batch_size: 4
+    sample_rate: 16000
+    num_spks: 2
+    soft_label_thres: 0.5
+    labels: null
+    batch_size: 1
+    shuffle: false
+    num_workers: 0
+    pin_memory: true
+    drop_last: false
+    session_len_sec: 20
+    seq_eval_mode: false
+
+  # ── Optimizer ─────────────────────────────────────────────────
+  # train_msdd.py reads: cfg.model.optim.lr
+  optim:
+    name: adam
+    lr: 5.0e-4                    # lower than TitaNet; MSDD head is shallow
+    betas: [0.9, 0.98]
+    weight_decay: 1.0e-3
+
+    # Warmup + cosine annealing scheduler
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 500
+      warmup_ratio: null
+      min_lr: 1.0e-6
+      last_epoch: -1
+
+  # ── Loss ──────────────────────────────────────────────────────
+  loss:
+    # Binary cross-entropy for per-frame speaker activity
+    weight: 1.0
+
+  # ── Speaker embedding model (referenced inside MSDD) ──────────
+  # NeMo's EncDecDiarLabelModel expects this sub-key for the
+  # internal speaker encoder that generates embeddings during training.
+  speaker_model:
+    model_path: ${speaker_model_path}   # inherits top-level path
+    freeze: true                        # kept frozen during MSDD training
+
+  # ── VAD settings (used when oracle_vad is false) ───────────────
+  vad:
+    model_path: "vad_multilingual_marblenet"
+    parameters:
+      onset: 0.4
+      offset: 0.6
+      pad_onset: 0.1
+      pad_offset: 0.1
+      min_duration_on: 0.2
+      min_duration_off: 0.2
+      filter_speech_first: true
+      window_length_in_sec: 0.15
+      shift_length_in_sec: 0.01
+
+# ──────────────────────────────────────────────────────────────
+# DER Callback settings (used by DERCallback in train_msdd.py)
+# ──────────────────────────────────────────────────────────────
+der_eval:
+  collar: 0.25
+  skip_overlap: false
+
+# ──────────────────────────────────────────────────────────────
+# Output / checkpoint paths
+# (Paths are also hard-coded in train_msdd.py, these are for
+#  documentation and potential future refactoring)
+# ──────────────────────────────────────────────────────────────
+exp_manager:
+  exp_dir: "outputs/"
+  name: "msdd-mongolian"
+  create_tensorboard_logger: true
+  create_checkpoint_callback: true

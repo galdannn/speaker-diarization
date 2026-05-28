@@ -1,0 +1,148 @@
+train_ds:
+  manifest_filepath: /manifests/combined_fisher_swbd_voxceleb12_librispeech/train.json
+  sample_rate: 16000
+  labels: null
+  batch_size: 64
+  shuffle: true
+  is_tarred: false
+  tarred_audio_filepaths: null
+  tarred_shard_strategy: scatter
+  augmentor:
+    noise:
+      manifest_path: /manifests/noise/rir_noise_manifest.json
+      prob: 0.5
+      min_snr_db: 0
+      max_snr_db: 15
+    speed:
+      prob: 0.5
+      sr: 16000
+      resample_type: kaiser_fast
+      min_speed_rate: 0.95
+      max_speed_rate: 1.05
+  num_workers: 15
+  pin_memory: true
+validation_ds:
+  manifest_filepath: /manifests/combined_fisher_swbd_voxceleb12_librispeech/dev.json
+  sample_rate: 16000
+  labels: null
+  batch_size: 128
+  shuffle: false
+  num_workers: 15
+  pin_memory: true
+model_defaults:
+  filters: 1024
+  repeat: 3
+  dropout: 0.1
+  separable: true
+  se: true
+  se_context_size: -1
+  kernel_size_factor: 1.0
+preprocessor:
+  _target_: nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor
+  normalize: per_feature
+  window_size: 0.025
+  sample_rate: 16000
+  window_stride: 0.01
+  window: hann
+  features: 80
+  n_fft: 512
+  frame_splicing: 1
+  dither: 1.0e-05
+spec_augment:
+  _target_: nemo.collections.asr.modules.SpectrogramAugmentation
+  freq_masks: 3
+  freq_width: 4
+  time_masks: 5
+  time_width: 0.03
+encoder:
+  _target_: nemo.collections.asr.modules.ConvASREncoder
+  feat_in: 80
+  activation: relu
+  conv_mask: true
+  jasper:
+  - filters: 1024
+    repeat: 1
+    kernel:
+    - 3
+    stride:
+    - 1
+    dilation:
+    - 1
+    dropout: 0.0
+    residual: false
+    separable: true
+    se: true
+    se_context_size: -1
+  - filters: 1024
+    repeat: 3
+    kernel:
+    - 7
+    stride:
+    - 1
+    dilation:
+    - 1
+    dropout: 0.1
+    residual: true
+    separable: true
+    se: true
+    se_context_size: -1
+  - filters: 1024
+    repeat: 3
+    kernel:
+    - 11
+    stride:
+    - 1
+    dilation:
+    - 1
+    dropout: 0.1
+    residual: true
+    separable: true
+    se: true
+    se_context_size: -1
+  - filters: 1024
+    repeat: 3
+    kernel:
+    - 15
+    stride:
+    - 1
+    dilation:
+    - 1
+    dropout: 0.1
+    residual: true
+    separable: true
+    se: true
+    se_context_size: -1
+  - filters: 3072
+    repeat: 1
+    kernel:
+    - 1
+    stride:
+    - 1
+    dilation:
+    - 1
+    dropout: 0.0
+    residual: false
+    separable: true
+    se: true
+    se_context_size: -1
+decoder:
+  _target_: nemo.collections.asr.modules.SpeakerDecoder
+  feat_in: 3072
+  num_classes: 16681
+  pool_mode: attention
+  emb_sizes: 192
+loss:
+  _target_: nemo.collections.asr.losses.angularloss.AngularSoftmaxLoss
+  scale: 30
+  margin: 0.2
+optim:
+  name: sgd
+  lr: 0.08
+  weight_decay: 0.0002
+  sched:
+    name: CosineAnnealing
+    warmup_ratio: 0.1
+    min_lr: 0.0
+  momentum: 0.9
+target: nemo.collections.asr.models.label_models.EncDecSpeakerLabelModel
+nemo_version: 2.7.0

@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Яриа Таних — Mongolian Speaker Diarization</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;1,9..144,300&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/wavesurfer.js/7.7.3/wavesurfer.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0a0c10;
+  --surface:  #111318;
+  --surface2: #191d24;
+  --border:   #232830;
+  --border2:  #2e3540;
+  --accent:   #4fffb0;
+  --accent2:  #00c8ff;
+  --danger:   #ff5f5f;
+  --text:     #e8edf5;
+  --muted:    #6b7585;
+  --muted2:   #4a5568;
+
+  /* Speaker colours */
+  --s0: #4fffb0; --s1: #00c8ff; --s2: #ff8c42;
+  --s3: #c084fc; --s4: #fb7185; --s5: #fbbf24;
+  --s6: #34d399; --s7: #818cf8;
+}
+
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+/* ── Grain overlay ── */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 999;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  opacity: 0.35;
+}
+
+/* ── Header ── */
+header {
+  border-bottom: 1px solid var(--border);
+  padding: 20px 40px;
+  display: flex; align-items: center; gap: 20px;
+  background: rgba(10,12,16,0.85);
+  backdrop-filter: blur(12px);
+  position: sticky; top: 0; z-index: 100;
+}
+.logo {
+  font-family: 'Fraunces', serif;
+  font-size: 22px; font-weight: 600; letter-spacing: -0.5px;
+  color: var(--text);
+}
+.logo span { color: var(--accent); }
+.tagline { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; }
+.status-pill {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 20px; padding: 6px 14px; font-size: 12px; color: var(--muted);
+  font-family: 'DM Mono', monospace;
+}
+.status-pip { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.status-pip.busy { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); animation: blink 1s infinite; }
+.status-pip.err  { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ── Layout ── */
+.workspace {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 0;
+  min-height: calc(100vh - 65px);
+}
+@media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } }
+
+/* ── Left sidebar ── */
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex; flex-direction: column;
+  grid-row: 1 / 3;
+}
+.sidebar-section { padding: 24px; border-bottom: 1px solid var(--border); }
+.section-label {
+  font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 2px;
+  color: var(--muted); text-transform: uppercase; margin-bottom: 16px;
+}
+
+/* ── Drop zone ── */
+.drop-zone {
+  border: 1.5px dashed var(--border2); border-radius: 10px;
+  padding: 28px 16px; text-align: center; cursor: pointer;
+  transition: all .2s; position: relative; overflow: hidden;
+}
+.drop-zone::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at center, rgba(79,255,176,0.04) 0%, transparent 70%);
+  opacity: 0; transition: opacity .3s;
+}
+.drop-zone:hover::before, .drop-zone.drag { opacity: 1; }
+.drop-zone:hover, .drop-zone.drag { border-color: var(--accent); }
+.drop-icon { font-size: 32px; margin-bottom: 10px; }
+.drop-text { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.drop-text strong { color: var(--accent); font-weight: 500; }
+.drop-formats {
+  display: flex; gap: 6px; justify-content: center; margin-top: 10px; flex-wrap: wrap;
+}
+.fmt-tag {
+  font-family: 'DM Mono', monospace; font-size: 10px; padding: 2px 8px;
+  background: var(--surface2); border: 1px solid var(--border2); border-radius: 4px;
+  color: var(--muted); letter-spacing: 1px;
+}
+#fileInput { display: none; }
+
+/* ── Rec button ── */
+.rec-btn {
+  width: 100%; margin-top: 14px; padding: 11px 16px;
+  border-radius: 8px; border: 1.5px solid var(--border2);
+  background: var(--surface2); color: var(--danger);
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: all .2s; font-family: 'DM Sans', sans-serif;
+}
+.rec-btn:hover { border-color: var(--danger); background: rgba(255,95,95,0.07); }
+.rec-btn.active { background: var(--danger); color: white; border-color: var(--danger); animation: recpulse 1.2s infinite; }
+@keyframes recpulse { 0%,100%{box-shadow:0 0 0 0 rgba(255,95,95,.4)} 50%{box-shadow:0 0 0 8px rgba(255,95,95,0)} }
+.rec-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+#recTimer { text-align:center; font-family:'DM Mono',monospace; font-size:12px; color:var(--danger); margin-top:8px; display:none; }
+
+/* ── Fields ── */
+.field { margin-top: 14px; }
+.field label { font-size: 11px; color: var(--muted); letter-spacing: .5px; display: block; margin-bottom: 6px; font-family: 'DM Mono', monospace; }
+.field input {
+  width: 100%; padding: 9px 12px; background: var(--surface2);
+  border: 1.5px solid var(--border2); border-radius: 8px;
+  color: var(--text); font-size: 14px; font-family: 'DM Sans', sans-serif;
+  transition: border-color .2s;
+}
+.field input:focus { outline: none; border-color: var(--accent); }
+.field input::placeholder { color: var(--muted2); }
+
+/* ── File info ── */
+#fileInfo {
+  margin-top: 12px; padding: 10px 12px; background: var(--surface2);
+  border: 1px solid var(--border2); border-radius: 8px;
+  font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted);
+  display: none; word-break: break-all;
+}
+#fileInfo .fname { color: var(--accent); }
+
+/* ── Run button ── */
+.run-btn {
+  width: 100%; margin-top: 16px; padding: 13px;
+  border-radius: 10px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent), #00d4aa);
+  color: #0a0c10; font-size: 14px; font-weight: 700;
+  font-family: 'DM Sans', sans-serif; letter-spacing: .3px;
+  transition: all .2s; position: relative; overflow: hidden;
+}
+.run-btn::after { content:''; position:absolute; inset:0; background:rgba(255,255,255,0); transition:.2s; }
+.run-btn:hover::after { background:rgba(255,255,255,0.1); }
+.run-btn:disabled { opacity: .3; cursor: not-allowed; }
+
+/* ── Progress ── */
+.progress-wrap { margin-top: 14px; display: none; }
+.progress-wrap.show { display: block; }
+.progress-track { height: 3px; background: var(--border2); border-radius: 99px; overflow: hidden; margin-bottom: 8px; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 99px; animation: sweep 1.8s ease-in-out infinite; }
+@keyframes sweep { 0%{margin-left:0;width:0%} 40%{width:60%} 100%{margin-left:100%;width:0%} }
+.progress-msg { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
+
+/* ── Waveform panel ── */
+.wave-section { padding: 24px; border-bottom: 1px solid var(--border); }
+#waveform { background: #080a0e; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; min-height: 72px; }
+.wave-controls { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.play-btn {
+  padding: 7px 18px; border-radius: 7px; border: 1.5px solid var(--border2);
+  background: var(--surface2); color: var(--text); font-size: 13px;
+  font-family: 'DM Sans', sans-serif; font-weight: 500; cursor: pointer;
+  display: flex; align-items: center; gap: 7px; transition: all .15s;
+}
+.play-btn:hover { border-color: var(--accent); color: var(--accent); }
+.time-disp { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); margin-left: auto; }
+
+/* ── Speaker legend ── */
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.legend-chip {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 20px; padding: 4px 10px; font-size: 12px;
+}
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Right: top toolbar ── */
+.right-panel { display: flex; flex-direction: column; }
+.transcript-header {
+  border-bottom: 1px solid var(--border);
+  padding: 18px 28px;
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface);
+  position: sticky; top: 65px; z-index: 50;
+}
+.transcript-title { font-family: 'Fraunces', serif; font-size: 17px; font-weight: 300; letter-spacing: -0.3px; }
+.transcript-title span { color: var(--accent); font-style: italic; }
+.toolbar { display: flex; gap: 8px; margin-left: auto; }
+.tbtn {
+  padding: 7px 14px; border-radius: 7px; border: 1.5px solid var(--border2);
+  background: var(--surface2); color: var(--muted); font-size: 12px;
+  font-family: 'DM Mono', monospace; cursor: pointer; transition: all .15s;
+  display: flex; align-items: center; gap: 6px; letter-spacing: .3px;
+}
+.tbtn:hover { border-color: var(--accent2); color: var(--accent2); }
+.tbtn:disabled { opacity: .3; cursor: not-allowed; }
+
+/* ── Transcript body ── */
+.transcript-body { flex: 1; padding: 28px; overflow-y: auto; }
+
+/* ── Empty state ── */
+.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 400px; text-align: center; gap: 16px;
+}
+.empty-art {
+  width: 80px; height: 80px; border-radius: 50%;
+  background: var(--surface2); border: 1.5px solid var(--border2);
+  display: flex; align-items: center; justify-content: center; font-size: 32px;
+}
+.empty h3 { font-family: 'Fraunces', serif; font-size: 20px; font-weight: 300; color: var(--text); }
+.empty p { font-size: 13px; color: var(--muted); line-height: 1.7; max-width: 300px; }
+.empty-steps { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; text-align: left; }
+.step {
+  display: flex; align-items: flex-start; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 10px; padding: 12px 16px;
+}
+.step-num {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--surface2); border: 1px solid var(--border2);
+  font-family: 'DM Mono', monospace; font-size: 11px;
+  display: flex; align-items: center; justify-content: center; color: var(--accent); flex-shrink: 0;
+}
+.step p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.step strong { color: var(--text); }
+
+/* ── Segment list ── */
+.seg-list { display: flex; flex-direction: column; gap: 4px; }
+
+/* ── Individual segment ── */
+.seg {
+  border-radius: 10px; border: 1.5px solid var(--border);
+  background: var(--surface); overflow: hidden;
+  transition: border-color .15s, background .15s;
+  cursor: pointer;
+}
+.seg:hover { background: var(--surface2); }
+.seg.active { border-color: var(--accent); background: rgba(79,255,176,0.04); }
+
+.seg-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+}
+.seg-bar { width: 4px; border-radius: 99px; flex-shrink: 0; align-self: stretch; min-height: 20px; }
+.seg-speaker-name { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; }
+.seg-timestamp { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.seg-dur {
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 20px; padding: 2px 8px; color: var(--muted2); white-space: nowrap;
+}
+.seg-actions { display: flex; gap: 4px; }
+.seg-btn {
+  width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border2);
+  background: var(--surface2); cursor: pointer; font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); transition: all .15s;
+}
+.seg-btn:hover { border-color: var(--accent2); color: var(--accent2); background: rgba(0,200,255,0.07); }
+
+/* ── Edit row ── */
+.edit-row {
+  display: none; padding: 0 14px 12px 28px;
+  align-items: center; gap: 8px;
+}
+.edit-row.open { display: flex; }
+.edit-input {
+  flex: 1; padding: 8px 12px; background: var(--bg);
+  border: 1.5px solid var(--accent2); border-radius: 8px;
+  color: var(--text); font-size: 13px; font-family: 'DM Sans', sans-serif;
+}
+.edit-input:focus { outline: none; }
+.edit-apply {
+  padding: 8px 14px; border-radius: 8px; border: none;
+  background: var(--accent2); color: var(--bg); font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: 'DM Sans', sans-serif; white-space: nowrap;
+}
+.edit-all {
+  padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border2);
+  background: var(--surface2); color: var(--muted); font-size: 12px;
+  cursor: pointer; font-family: 'DM Sans', sans-serif; white-space: nowrap; transition: all .15s;
+}
+.edit-all:hover { color: var(--text); border-color: var(--border2); }
+
+/* ── Toast ── */
+.toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--surface2); border: 1px solid var(--border2);
+  color: var(--text); padding: 12px 22px; border-radius: 10px; font-size: 13px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 9999; opacity: 0;
+  transition: all .3s; pointer-events: none; white-space: nowrap;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast .t-accent { color: var(--accent); font-family: 'DM Mono', monospace; }
+
+/* ── Loading ── */
+.loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; gap: 20px; }
+.spinner { width: 48px; height: 48px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-msg { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
+.loading-sub { font-size: 12px; color: var(--accent); font-family: 'DM Mono', monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">Яриа <span>Таних</span></div>
+    <div class="tagline">Mongolian Speaker Diarization</div>
+  </div>
+  <div class="status-pill">
+    <div class="status-pip" id="statusPip"></div>
+    <span id="statusText">TitaNet + Clustering · Ready</span>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <!-- ── LEFT SIDEBAR ── -->
+  <aside class="sidebar">
+
+    <!-- Upload -->
+    <div class="sidebar-section">
+      <div class="section-label">Audio Input</div>
+
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-icon">🎵</div>
+        <div class="drop-text">
+          <strong>Drop audio file here</strong><br>or click to browse
+        </div>
+        <div class="drop-formats">
+          <span class="fmt-tag">WAV</span>
+          <span class="fmt-tag">MP3</span>
+          <span class="fmt-tag">FLAC</span>
+          <span class="fmt-tag">M4A</span>
+        </div>
+        <input type="file" id="fileInput" accept=".wav,.mp3,.flac,.m4a,.ogg">
+      </div>
+
+      <button class="rec-btn" id="recBtn">
+        <div class="rec-dot"></div>
+        <span id="recLabel">Record from microphone</span>
+      </button>
+      <div id="recTimer">⏺ <span id="recSec">0:00</span></div>
+
+      <div class="field">
+        <label>Number of speakers (blank = auto-detect)</label>
+        <input type="number" id="numSpk" min="2" max="8" placeholder="Auto">
+      </div>
+
+      <div id="fileInfo"></div>
+
+      <button class="run-btn" id="runBtn" disabled>Diarize Audio</button>
+
+      <div class="progress-wrap" id="prog">
+        <div class="progress-track"><div class="progress-fill"></div></div>
+        <div class="progress-msg" id="progMsg">Initializing...</div>
+      </div>
+    </div>
+
+    <!-- Waveform -->
+    <div class="wave-section" id="waveSection" style="display:none">
+      <div class="section-label">Waveform</div>
+      <div id="waveform"></div>
+      <div class="wave-controls">
+        <button class="play-btn" id="playBtn">▶ Play</button>
+        <span class="time-disp" id="timeDisp">0:00 / 0:00</span>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+
+  </aside>
+
+  <!-- ── RIGHT PANEL ── -->
+  <div class="right-panel">
+
+    <div class="transcript-header">
+      <div class="transcript-title">Speaker <span>Transcript</span></div>
+      <div class="toolbar">
+        <button class="tbtn" id="exportTxtBtn" disabled onclick="exportTxt()">↓ Export TXT</button>
+        <button class="tbtn" id="dlRttmBtn" disabled>↓ Download RTTM</button>
+      </div>
+    </div>
+
+    <div class="transcript-body" id="transcriptBody">
+      <div class="empty">
+        <div class="empty-art">🎙️</div>
+        <h3>No transcript yet</h3>
+        <p>Upload or record audio, then click <strong>Diarize Audio</strong> to identify speakers.</p>
+        <div class="empty-steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <p><strong>Drop a file</strong> or record from your microphone in the sidebar.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <p><strong>Click Diarize Audio</strong> — takes ~40s for a 2-min file.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <p><strong>Edit speaker names</strong> — click ✏️ on any segment to rename or relabel all.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Colours ──────────────────────────────────────────────────────────────────
+const COLORS = ['#4fffb0','#00c8ff','#ff8c42','#c084fc','#fb7185','#fbbf24','#34d399','#818cf8'];
+const spkColor = {};
+const spkName  = {};
+
+function color(spk) {
+  if (!spkColor[spk]) spkColor[spk] = COLORS[Object.keys(spkColor).length % COLORS.length];
+  return spkColor[spk];
+}
+function name(spk) { return spkName[spk] || spk; }
+
+// ── State ────────────────────────────────────────────────────────────────────
+let wavesurfer = null;
+let segments   = [];
+let jobId      = null;
+let pollTimer  = null;
+let mediaRec   = null;
+let audioChunks = [];
+let recInterval = null;
+let recSecs    = 0;
+let audioBlob  = null;
+let audioFile  = null;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fmt(s) {
+  const m = Math.floor(s / 60), ss = Math.floor(s % 60).toString().padStart(2,'0');
+  return `${m}:${ss}`;
+}
+
+function toast(msg, sub='') {
+  const el = document.getElementById('toast');
+  el.innerHTML = msg + (sub ? ` <span class="t-accent">${sub}</span>` : '');
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function setStatus(state, text) {
+  const pip = document.getElementById('statusPip');
+  pip.className = 'status-pip' + (state==='busy' ? ' busy' : state==='err' ? ' err' : '');
+  document.getElementById('statusText').textContent = text;
+}
+
+// ── WaveSurfer ───────────────────────────────────────────────────────────────
+function initWave(src) {
+  if (wavesurfer) { wavesurfer.destroy(); wavesurfer = null; }
+  document.getElementById('waveSection').style.display = 'block';
+
+  wavesurfer = WaveSurfer.create({
+    container: '#waveform',
+    waveColor: '#2a3a2a',
+    progressColor: '#4fffb0',
+    cursorColor: '#4fffb0',
+    height: 72, barWidth: 2, barGap: 1, barRadius: 2,
+    normalize: true,
+  });
+  wavesurfer.load(src);
+
+  wavesurfer.on('ready', () => {
+    document.getElementById('timeDisp').textContent = `0:00 / ${fmt(wavesurfer.getDuration())}`;
+  });
+  wavesurfer.on('audioprocess', () => {
+    const t = wavesurfer.getCurrentTime();
+    document.getElementById('timeDisp').textContent = `${fmt(t)} / ${fmt(wavesurfer.getDuration())}`;
+    highlightSeg(t);
+  });
+  wavesurfer.on('finish', () => {
+    document.getElementById('playBtn').textContent = '▶ Play';
+  });
+
+  document.getElementById('playBtn').onclick = () => {
+    wavesurfer.playPause();
+    document.getElementById('playBtn').textContent = wavesurfer.isPlaying() ? '⏸ Pause' : '▶ Play';
+  };
+}
+
+function highlightSeg(t) {
+  document.querySelectorAll('.seg').forEach(el => {
+    const on = t >= +el.dataset.start && t < +el.dataset.end;
+    el.classList.toggle('active', on);
+    if (on) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+}
+
+function seekTo(t) {
+  if (wavesurfer) wavesurfer.seekTo(t / wavesurfer.getDuration());
+}
+
+// ── File input ────────────────────────────────────────────────────────────────
+const dropZone  = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.onclick = () => fileInput.click();
+fileInput.onchange = e => setFile(e.target.files[0]);
+dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add('drag'); };
+dropZone.ondragleave = () => dropZone.classList.remove('drag');
+dropZone.ondrop = e => { e.preventDefault(); dropZone.classList.remove('drag'); setFile(e.dataTransfer.files[0]); };
+
+function setFile(f) {
+  if (!f) return;
+  audioFile = f; audioBlob = null;
+  const fi = document.getElementById('fileInfo');
+  fi.style.display = 'block';
+  fi.innerHTML = `<span class="fname">${f.name}</span> · ${(f.size/1024/1024).toFixed(2)} MB`;
+  document.getElementById('runBtn').disabled = false;
+  initWave(URL.createObjectURL(f));
+}
+
+// ── Recording ─────────────────────────────────────────────────────────────────
+document.getElementById('recBtn').onclick = async () => {
+  if (!mediaRec) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRec = new MediaRecorder(stream);
+      audioChunks = [];
+      mediaRec.ondataavailable = e => audioChunks.push(e.data);
+      mediaRec.onstop = () => {
+        audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+        audioFile = null;
+        const fi = document.getElementById('fileInfo');
+        fi.style.display = 'block';
+        fi.innerHTML = `<span class="fname">Recorded audio</span> · ${(audioBlob.size/1024).toFixed(0)} KB`;
+        document.getElementById('runBtn').disabled = false;
+        initWave(URL.createObjectURL(audioBlob));
+        clearInterval(recInterval); recSecs = 0;
+        document.getElementById('recTimer').style.display = 'none';
+        mediaRec = null;
+      };
+      mediaRec.start();
+      document.getElementById('recBtn').className = 'rec-btn active';
+      document.getElementById('recLabel').textContent = 'Stop recording';
+      document.getElementById('recTimer').style.display = 'block';
+      recInterval = setInterval(() => {
+        recSecs++;
+        document.getElementById('recSec').textContent = fmt(recSecs);
+      }, 1000);
+    } catch { toast('Microphone access denied'); }
+  } else {
+    mediaRec.stop();
+    mediaRec.stream.getTracks().forEach(t => t.stop());
+    document.getElementById('recBtn').className = 'rec-btn';
+    document.getElementById('recLabel').textContent = 'Record from microphone';
+  }
+};
+
+// ── Run ───────────────────────────────────────────────────────────────────────
+document.getElementById('runBtn').onclick = async () => {
+  const fd = new FormData();
+  if (audioBlob)   fd.append('audio', audioBlob, 'recording.wav');
+  else if (audioFile) fd.append('audio', audioFile);
+  else return;
+
+  const ns = document.getElementById('numSpk').value;
+  if (ns) fd.append('num_speakers', ns);
+
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('prog').classList.add('show');
+  document.getElementById('progMsg').textContent = 'Uploading...';
+  setStatus('busy', 'Processing...');
+  showLoading();
+
+  try {
+    const res  = await fetch('/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    jobId = data.job_id;
+    poll();
+  } catch {
+    toast('Server error — is server.py running?');
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('prog').classList.remove('show');
+    setStatus('', 'TitaNet + Clustering · Ready');
+  }
+};
+
+function showLoading() {
+  document.getElementById('transcriptBody').innerHTML = `
+    <div class="loading-state">
+      <div class="spinner"></div>
+      <div class="loading-msg">Running diarization pipeline...</div>
+      <div class="loading-sub" id="liveMsg">Initializing models</div>
+    </div>`;
+}
+
+function poll() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(`/status/${jobId}`);
+      const d = await r.json();
+      const lm = document.getElementById('liveMsg');
+      if (lm) lm.textContent = d.progress || '';
+      document.getElementById('progMsg').textContent = d.progress || '';
+
+      if (d.status === 'done') {
+        clearInterval(pollTimer);
+        segments = d.segments;
+        document.getElementById('prog').classList.remove('show');
+        document.getElementById('runBtn').disabled = false;
+        setStatus('', `Done · ${segments.length} segments`);
+        renderTranscript();
+        renderLegend();
+        initWave(`/audio/${jobId}`);
+        document.getElementById('exportTxtBtn').disabled = false;
+        document.getElementById('dlRttmBtn').disabled = false;
+        document.getElementById('dlRttmBtn').onclick = () => window.open(`/download/${jobId}`);
+        const nSpk = new Set(segments.map(s => s.speaker)).size;
+        toast(`Done!`, `${segments.length} segments · ${nSpk} speakers`);
+      } else if (d.status === 'error') {
+        clearInterval(pollTimer);
+        setStatus('err', 'Error — check server');
+        document.getElementById('prog').classList.remove('show');
+        document.getElementById('runBtn').disabled = false;
+        document.getElementById('transcriptBody').innerHTML = `
+          <div class="empty">
+            <div class="empty-art">⚠️</div>
+            <h3>Diarization failed</h3>
+            <p style="color:var(--danger)">${d.error}</p>
+          </div>`;
+        toast('Error — check server.py console');
+      }
+    } catch {}
+  }, 2000);
+}
+
+// ── Render transcript ─────────────────────────────────────────────────────────
+function renderTranscript() {
+  const body = document.getElementById('transcriptBody');
+  body.innerHTML = '<div class="seg-list" id="segList"></div>';
+  const list = document.getElementById('segList');
+
+  segments.forEach((seg, i) => {
+    const c = color(seg.speaker);
+    const n = name(seg.speaker);
+
+    const div = document.createElement('div');
+    div.className = 'seg';
+    div.dataset.start = seg.start;
+    div.dataset.end   = seg.end;
+    div.id = `seg-${i}`;
+
+    div.innerHTML = `
+      <div class="seg-row" onclick="seekTo(${seg.start})">
+        <div class="seg-bar" style="background:${c}"></div>
+        <span class="seg-speaker-name" id="sname-${i}" style="color:${c}">${n}</span>
+        <span class="seg-timestamp">${fmt(seg.start)} → ${fmt(seg.end)}</span>
+        <span class="seg-dur">${seg.duration.toFixed(1)}s</span>
+        <div class="seg-actions">
+          <button class="seg-btn" title="Play segment" onclick="event.stopPropagation();playSegment(${seg.start},${seg.end})">▶</button>
+          <button class="seg-btn" title="Edit speaker name" onclick="event.stopPropagation();toggleEdit(${i})">✏️</button>
+        </div>
+      </div>
+      <div class="edit-row" id="edit-${i}">
+        <input class="edit-input" id="einput-${i}" placeholder="Speaker name" value="${n}">
+        <button class="edit-apply" onclick="applyName(${i})">Apply</button>
+        <button class="edit-all" onclick="applyAll(${i})">Apply to all "${n}"</button>
+      </div>`;
+
+    list.appendChild(div);
+  });
+}
+
+function renderLegend() {
+  const uniq = [...new Set(segments.map(s => s.speaker))].sort();
+  document.getElementById('legend').innerHTML = uniq.map(spk => `
+    <div class="legend-chip">
+      <div class="legend-dot" style="background:${color(spk)}"></div>
+      <span id="lchip-${spk}">${name(spk)}</span>
+    </div>`).join('');
+}
+
+function playSegment(start, end) {
+  if (!wavesurfer) return;
+  seekTo(start);
+  if (!wavesurfer.isPlaying()) wavesurfer.play();
+  document.getElementById('playBtn').textContent = '⏸ Pause';
+  const stop = setInterval(() => {
+    if (!wavesurfer.isPlaying() || wavesurfer.getCurrentTime() >= end) {
+      wavesurfer.pause();
+      document.getElementById('playBtn').textContent = '▶ Play';
+      clearInterval(stop);
+    }
+  }, 100);
+}
+
+function toggleEdit(i) {
+  const row = document.getElementById(`edit-${i}`);
+  row.classList.toggle('open');
+  if (row.classList.contains('open')) document.getElementById(`einput-${i}`).focus();
+}
+
+function applyName(i) {
+  const input  = document.getElementById(`einput-${i}`);
+  const newName = input.value.trim() || segments[i].speaker;
+  spkName[segments[i].speaker] = newName;
+  document.getElementById(`sname-${i}`).textContent = newName;
+  document.getElementById(`edit-${i}`).classList.remove('open');
+  const chip = document.getElementById(`lchip-${segments[i].speaker}`);
+  if (chip) chip.textContent = newName;
+}
+
+function applyAll(i) {
+  const input   = document.getElementById(`einput-${i}`);
+  const newName = input.value.trim() || segments[i].speaker;
+  const origSpk = segments[i].speaker;
+  spkName[origSpk] = newName;
+  // Update all matching segments
+  segments.forEach((seg, j) => {
+    if (seg.speaker === origSpk) {
+      const lbl = document.getElementById(`sname-${j}`);
+      if (lbl) lbl.textContent = newName;
+      const inp = document.getElementById(`einput-${j}`);
+      if (inp) inp.value = newName;
+    }
+  });
+  document.getElementById(`edit-${i}`).classList.remove('open');
+  const chip = document.getElementById(`lchip-${origSpk}`);
+  if (chip) chip.textContent = newName;
+  toast(`Renamed all "${origSpk}" →`, newName);
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+function exportTxt() {
+  if (!segments.length) return;
+  let txt = 'MONGOLIAN SPEAKER DIARIZATION TRANSCRIPT\n';
+  txt += `Generated: ${new Date().toLocaleString()}\n`;
+  txt += '='.repeat(50) + '\n\n';
+  let lastSpk = null;
+  segments.forEach(seg => {
+    const n = name(seg.speaker);
+    if (n !== lastSpk) { txt += `\n[${n}]\n`; lastSpk = n; }
+    txt += `  ${fmt(seg.start)} – ${fmt(seg.end)}  (${seg.duration.toFixed(1)}s)\n`;
+  });
+  const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'diarization_transcript.txt';
+  a.click();
+}
+</script>
+</body>
+</html>
